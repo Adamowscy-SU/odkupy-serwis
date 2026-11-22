@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111317">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Odkupy">
+<title>Odkupy z serwisu</title>
+<style>
+:root{--bg:#111317;--card:#1d2027;--card2:#272b34;--line:#3a3f4b;--ink:#f1f1ed;--mut:#9a9ea8;--acc:#f2c14e;--ok:#6fcf97;--err:#eb6e5f}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:calc(14px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+header b{font-size:19px}
+header button{background:none;border:0;color:var(--mut);font-size:14px;text-decoration:underline}
+.card{background:var(--card);border-radius:18px;padding:18px;margin-bottom:14px}
+h2{margin:0 0 4px;font-size:24px}
+.mut{color:var(--mut);font-size:15px}
+label{display:block;font-size:14px;color:var(--mut);margin:14px 0 6px}
+select,input{width:100%;font-size:18px;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--ink)}
+.btn{display:block;width:100%;border:0;border-radius:16px;padding:18px;font-size:19px;font-weight:700;background:var(--acc);color:#1a1a1a;margin-top:16px;cursor:pointer}
+.btn.sec{background:var(--card2);color:var(--ink);font-weight:600}
+.btn:disabled{opacity:.35}
+.step{display:flex;gap:14px;align-items:center}
+.step svg{flex:0 0 120px;height:120px;background:var(--card2);border-radius:14px}
+.prog{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:14px}
+.tile{aspect-ratio:1;border-radius:10px;background:var(--card2);border:2px solid var(--line);overflow:hidden;position:relative;padding:0;color:var(--mut);font-size:11px}
+.tile img{width:100%;height:100%;object-fit:cover;display:block}
+.tile.cur{border-color:var(--acc)}
+.tile.done{border-color:var(--ok)}
+.tile span{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:2px 0;text-align:center}
+.hint{font-size:16px;margin-top:6px}
+.big{font-size:44px;text-align:center;margin:6px 0}
+.err{color:var(--err)}
+.ok{color:var(--ok)}
+input[type=file]{display:none}
+.spin{width:44px;height:44px;border:4px solid var(--line);border-top-color:var(--acc);border-radius:50%;margin:10px auto;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<input type="file" id="cam" accept="image/*" capture="environment">
+
+<script>
+/* ===== KONFIGURACJA – wklej tu adres z Google Apps Script (Wdróż → Aplikacja internetowa) ===== */
+const SCRIPT_URL = "WKLEJ_TUTAJ_ADRES_APLIKACJI_GOOGLE";
+/* ============================================================================================= */
+
+const KROKI = [
+  {k:"vin",       t:"VIN spod szyby",  h:"Lewy dolny róg przedniej szyby. Przyłóż telefon blisko, lekko pod kątem, żeby nie było odblasku.", p:[38,30], a:[47,30]},
+  {k:"przod-lewy",t:"Przód lewy",      h:"Stań 3–4 m od lewego przedniego narożnika. Całe auto w kadrze.", p:[12,8],  a:[38,22]},
+  {k:"przod-prawy",t:"Przód prawy",    h:"Przejdź na prawy przedni narożnik. Całe auto w kadrze.",           p:[88,8],  a:[62,22]},
+  {k:"tyl-prawy", t:"Tył prawy",       h:"Prawy tylny narożnik. Całe auto w kadrze.",                        p:[88,92], a:[62,78]},
+  {k:"tyl-lewy",  t:"Tył lewy",        h:"Lewy tylny narożnik. Całe auto w kadrze.",                         p:[12,92], a:[38,78]},
+  {k:"wnetrze",   t:"Wnętrze",         h:"Otwórz drzwi kierowcy. W kadrze: kierownica, deska rozdzielcza i fotel.", p:[18,44], a:[44,46]}
+];
+
+let st = load();
+let zdj = {};          // klucz -> {blob, url}
+let busy = false;
+
+function load(){ try{ return JSON.parse(localStorage.getItem("odkupy")||"{}"); }catch(e){ return {}; } }
+function save(){ try{ localStorage.setItem("odkupy", JSON.stringify(st)); }catch(e){} }
+const $ = s => document.querySelector(s);
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function diagram(k){
+  const s = KROKI.find(x=>x.k===k);
+  return `<svg viewBox="0 0 100 100">
+    <rect x="36" y="14" width="28" height="72" rx="9" fill="#5c7690"/>
+    <rect x="39" y="26" width="22" height="10" rx="3" fill="#9cc2d8"/>
+    <rect x="39" y="66" width="22" height="8" rx="3" fill="#9cc2d8"/>
+    <text x="50" y="9" fill="#9a9ea8" font-size="7" text-anchor="middle">PRZÓD</text>
+    ${k==="wnetrze"?'<line x1="36" y1="40" x2="24" y2="52" stroke="#5c7690" stroke-width="3"/>':''}
+    <line x1="${s.p[0]}" y1="${s.p[1]}" x2="${s.a[0]}" y2="${s.a[1]}" stroke="#f2c14e" stroke-width="2" stroke-dasharray="3 2"/>
+    <circle cx="${s.p[0]}" cy="${s.p[1]}" r="6" fill="#f2c14e"/>
+  </svg>`;
+}
+
+function render(){
+  if(!st.doradca || !st.pin) return renderSetup();
+  const brak = KROKI.filter(x=>!zdj[x.k]);
+  const cur = brak[0];
+  let h = `<header><b>Odkupy z serwisu</b><button onclick="zmien()">${esc(st.doradca)} · zmień</button></header>`;
+  h += `<div class="prog">${KROKI.map(x=>`<button class="tile ${zdj[x.k]?'done':''} ${cur&&cur.k===x.k?'cur':''}" onclick="foto('${x.k}')">${zdj[x.k]?`<img src="${zdj[x.k].url}">`:''}<span>${esc(x.t)}</span></button>`).join("")}</div>`;
+  if(cur){
+    const i = KROKI.indexOf(cur)+1;
+    h += `<div class="card"><div class="mut">Zdjęcie ${i} z ${KROKI.length}</div>
+      <div class="step">${diagram(cur.k)}<div><h2>${esc(cur.t)}</h2><div class="hint">${esc(cur.h)}</div></div></div>
+      <button class="btn" onclick="foto('${cur.k}')">📷 Zrób zdjęcie</button></div>`;
+  } else {
+    h += `<div class="card"><h2>Komplet zdjęć ✓</h2><div class="mut">Możesz poprawić dowolne zdjęcie, stukając w miniaturę.</div>
+      <button class="btn" onclick="wyslij()">Wyślij do handlowców</button></div>`;
+  }
+  if(Object.keys(zdj).length) h += `<button class="btn sec" onclick="reset()">Zacznij od nowa</button>`;
+  $("#app").innerHTML = h;
+}
+
+async function renderSetup(){
+  $("#app").innerHTML = `<header><b>Odkupy z serwisu</b></header>
+    <div class="card"><h2>Pierwsze uruchomienie</h2><div class="mut">Ustawiasz to raz na tym telefonie.</div>
+    <label>Kim jesteś?</label><select id="dor"><option value="">Wczytywanie…</option></select>
+    <label>PIN salonu</label><input id="pin" type="password" inputmode="numeric" autocomplete="off">
+    <div id="msg" class="mut" style="margin-top:10px"></div>
+    <button class="btn" id="zap" onclick="zapisz()">Zapisz</button></div>`;
+  try{
+    const r = await (await fetch(SCRIPT_URL+"?action=config")).json();
+    $("#dor").innerHTML = `<option value="">— wybierz —</option>` + r.doradcy.map(d=>`<option>${esc(d)}</option>`).join("");
+    if(st.doradca) $("#dor").value = st.doradca;
+  }catch(e){
+    $("#dor").outerHTML = `<input id="dor" placeholder="Imię i nazwisko">`;
+    $("#msg").textContent = "Nie udało się pobrać listy doradców. Wpisz imię i nazwisko.";
+  }
+}
+
+async function zapisz(){
+  const d = $("#dor").value.trim(), p = $("#pin").value.trim();
+  if(!d || !p){ $("#msg").textContent = "Wybierz siebie i wpisz PIN."; return; }
+  $("#zap").disabled = true; $("#msg").textContent = "Sprawdzam PIN…";
+  try{
+    const r = await (await fetch(SCRIPT_URL+"?action=check&pin="+encodeURIComponent(p))).json();
+    if(!r.ok){ $("#msg").innerHTML = '<span class="err">Zły PIN.</span>'; $("#zap").disabled=false; return; }
+  }catch(e){ $("#msg").innerHTML = '<span class="err">Brak połączenia. Spróbuj ponownie.</span>'; $("#zap").disabled=false; return; }
+  st.doradca = d; st.pin = p; save(); render();
+}
+function zmien(){ st.pin = ""; save(); render(); }
+
+let fotoKlucz = null;
+function foto(k){ if(busy) return; fotoKlucz = k; const c=$("#cam"); c.value=""; c.click(); }
+$("#cam").addEventListener("change", async e=>{
+  const f = e.target.files[0]; if(!f || !fotoKlucz) return;
+  const blob = await zmniejsz(f, fotoKlucz==="vin" ? 2200 : 1600);
+  if(zdj[fotoKlucz]) URL.revokeObjectURL(zdj[fotoKlucz].url);
+  zdj[fotoKlucz] = {blob, url: URL.createObjectURL(blob)};
+  render();
+});
+
+async function zmniejsz(file, max){
+  let src;
+  try{ src = await createImageBitmap(file, {imageOrientation:"from-image"}); }
+  catch(e){ src = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=URL.createObjectURL(file); }); }
+  const w = src.width, h = src.height, s = Math.min(1, max/Math.max(w,h));
+  const c = document.createElement("canvas"); c.width = Math.round(w*s); c.height = Math.round(h*s);
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  return await new Promise(r=>c.toBlob(r, "image/jpeg", 0.82));
+}
+const b64 = blob => new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result.split(",")[1]); fr.readAsDataURL(blob); });
+
+async function wyslij(){
+  if(busy) return; busy = true;
+  $("#app").innerHTML = `<div class="card" style="text-align:center"><div class="spin"></div><h2>Wysyłanie…</h2><div class="mut">Zwykle 10–30 sekund. Nie zamykaj strony.</div></div>`;
+  try{
+    const zdjecia = [];
+    for(const x of KROKI) zdjecia.push({klucz:x.k, nazwa:x.t, dane: await b64(zdj[x.k].blob)});
+    const r = await (await fetch(SCRIPT_URL, {method:"POST", body: JSON.stringify({pin:st.pin, doradca:st.doradca, zdjecia})})).json();
+    if(!r.ok) throw new Error(r.error || "Błąd serwera");
+    busy = false;
+    $("#app").innerHTML = `<div class="card" style="text-align:center"><div class="big ok">✓</div><h2>Wysłane</h2>
+      <div class="mut">${r.vin ? "VIN: <b style='color:var(--ink)'>"+esc(r.vin)+"</b>" : "VIN odczyta handlowiec ze zdjęcia."}</div>
+      <button class="btn" onclick="reset(true)">Następne auto</button></div>`;
+  }catch(e){
+    busy = false;
+    const pinErr = String(e.message).includes("PIN");
+    $("#app").innerHTML = `<div class="card" style="text-align:center"><div class="big err">!</div><h2>Nie wysłano</h2>
+      <div class="mut">${pinErr ? "PIN się nie zgadza. Wpisz go ponownie." : "Zdjęcia są zachowane. Sprawdź zasięg i spróbuj jeszcze raz."}</div>
+      <button class="btn" onclick="${pinErr ? "zmien()" : "wyslij()"}">${pinErr ? "Wpisz PIN" : "Spróbuj ponownie"}</button>
+      ${pinErr ? "" : '<button class="btn sec" onclick="render()">Wróć do zdjęć</button>'}</div>`;
+  }
+}
+
+function reset(bez){
+  if(!bez && !confirmBox()) return;
+  Object.values(zdj).forEach(z=>URL.revokeObjectURL(z.url)); zdj = {}; render();
+}
+let potw = false;
+function confirmBox(){ if(potw){ potw=false; return true; } potw = true; setTimeout(()=>potw=false, 3000);
+  const b=[...document.querySelectorAll(".btn.sec")].pop(); if(b) b.textContent="Stuknij jeszcze raz, aby usunąć zdjęcia"; return false; }
+
+render();
+</script>
+</body>
+</html>
